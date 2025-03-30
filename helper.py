@@ -6,6 +6,11 @@ import settings
 import threading
 from streamlit_webrtc import webrtc_streamer, VideoProcessorBase, RTCConfiguration
 import av
+import logging
+
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 def load_model(model_path):
     model = YOLO(model_path)
@@ -28,30 +33,34 @@ class VideoProcessor(VideoProcessorBase):
         self.last_detection_time = 0
 
     def recv(self, frame):
-        img = frame.to_ndarray(format="bgr24")
-        img = cv2.resize(img, (640, int(640*(9/16))))
-        
-        res = self.model.predict(img, conf=0.6)
-        names = self.model.names
-        detected_items = set()
+        try:
+            img = frame.to_ndarray(format="bgr24")
+            img = cv2.resize(img, (640, int(640*(9/16))))
+            
+            res = self.model.predict(img, conf=0.6)
+            names = self.model.names
+            detected_items = set()
 
-        for result in res:
-            new_classes = set([names[int(c)] for c in result.boxes.cls])
-            if new_classes != self.unique_classes:
-                self.unique_classes = new_classes
-                detected_items.update(self.unique_classes)
-                
-                # Update session state from a thread-safe context
-                if detected_items:
-                    recyclable_items, non_recyclable_items, hazardous_items = classify_waste_type(detected_items)
-                    st.session_state['detected_items'] = {
-                        'recyclable': recyclable_items,
-                        'non_recyclable': non_recyclable_items,
-                        'hazardous': hazardous_items
-                    }
-                    st.session_state['update_ui'] = True
+            for result in res:
+                new_classes = set([names[int(c)] for c in result.boxes.cls])
+                if new_classes != self.unique_classes:
+                    self.unique_classes = new_classes
+                    detected_items.update(self.unique_classes)
+                    
+                    # Update session state from a thread-safe context
+                    if detected_items:
+                        recyclable_items, non_recyclable_items, hazardous_items = classify_waste_type(detected_items)
+                        st.session_state['detected_items'] = {
+                            'recyclable': recyclable_items,
+                            'non_recyclable': non_recyclable_items,
+                            'hazardous': hazardous_items
+                        }
+                        st.session_state['update_ui'] = True
 
-        return av.VideoFrame.from_ndarray(res[0].plot(), format="bgr24")
+            return av.VideoFrame.from_ndarray(res[0].plot(), format="bgr24")
+        except Exception as e:
+            logger.error(f"Error in video processing: {str(e)}")
+            return frame
 
 def play_webcam(model):
     # Initialize session state variables
@@ -65,17 +74,25 @@ def play_webcam(model):
     non_recyclable_placeholder = st.sidebar.empty()
     hazardous_placeholder = st.sidebar.empty()
     
-    # Configure WebRTC
+    # Configure WebRTC with multiple STUN servers and TURN servers
     rtc_configuration = RTCConfiguration(
-        {"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]}
+        {"iceServers": [
+            {"urls": ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302", "stun:stun2.l.google.com:19302"]},
+            # Free TURN server (limited capacity)
+            {"urls": "turn:openrelay.metered.ca:80", "username": "openrelayproject", "credential": "openrelayproject"},
+            {"urls": "turn:openrelay.metered.ca:443", "username": "openrelayproject", "credential": "openrelayproject"},
+            {"urls": "turn:openrelay.metered.ca:443?transport=tcp", "username": "openrelayproject", "credential": "openrelayproject"}
+        ]}
     )
     
-    # Create WebRTC streamer
+    # Create WebRTC streamer with additional options
     webrtc_ctx = webrtc_streamer(
         key="waste-detection",
         video_processor_factory=lambda: VideoProcessor(model),
         rtc_configuration=rtc_configuration,
         media_stream_constraints={"video": True, "audio": False},
+        async_processing=True,
+        video_html_attrs={"controls": True, "autoPlay": True, "style": {"width": "100%", "height": "auto"}},
     )
     
     # Update UI based on detections
