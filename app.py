@@ -2,6 +2,10 @@ from pathlib import Path
 import streamlit as st
 import helper
 import settings
+import os
+
+# Configure port for Render deployment
+port = int(os.environ.get("PORT", 8501))
 
 st.set_page_config(
     page_title="Waste Detection",

@@ -7,9 +7,10 @@ import threading
 from streamlit_webrtc import webrtc_streamer, VideoProcessorBase, RTCConfiguration
 import av
 import logging
+import os
 
 # Set up logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 def load_model(model_path):
@@ -75,17 +76,32 @@ def play_webcam(model):
     hazardous_placeholder = st.sidebar.empty()
     
     # Configure WebRTC with multiple STUN servers and TURN servers
+    # Using a combination of free TURN servers for better reliability
     rtc_configuration = RTCConfiguration(
         {"iceServers": [
-            {"urls": ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302", "stun:stun2.l.google.com:19302"]},
-            # Free TURN server (limited capacity)
-            {"urls": "turn:openrelay.metered.ca:80", "username": "openrelayproject", "credential": "openrelayproject"},
-            {"urls": "turn:openrelay.metered.ca:443", "username": "openrelayproject", "credential": "openrelayproject"},
-            {"urls": "turn:openrelay.metered.ca:443?transport=tcp", "username": "openrelayproject", "credential": "openrelayproject"}
+            {"urls": ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"]},
+            {
+                "urls": [
+                    "turn:openrelay.metered.ca:80",
+                    "turn:openrelay.metered.ca:443",
+                    "turn:openrelay.metered.ca:443?transport=tcp"
+                ],
+                "username": "openrelayproject",
+                "credential": "openrelayproject"
+            },
+            {
+                "urls": [
+                    "turn:global.turn.twilio.com:3478?transport=udp",
+                    "turn:global.turn.twilio.com:3478?transport=tcp",
+                    "turn:global.turn.twilio.com:443?transport=tcp"
+                ],
+                "username": "f4b4035eaa76f4a55de5f4351567653ee4ff6fa97b50b6b334fcc1be9c27212d",
+                "credential": "myL7UCqLYXcr1zBzJ7+IZDJloLe4wG4UvLX8H3Kv3lY="
+            }
         ]}
     )
     
-    # Create WebRTC streamer with additional options
+    # Create WebRTC streamer with additional options for better stability
     webrtc_ctx = webrtc_streamer(
         key="waste-detection",
         video_processor_factory=lambda: VideoProcessor(model),
@@ -93,6 +109,7 @@ def play_webcam(model):
         media_stream_constraints={"video": True, "audio": False},
         async_processing=True,
         video_html_attrs={"controls": True, "autoPlay": True, "style": {"width": "100%", "height": "auto"}},
+        async_transform=True,
     )
     
     # Update UI based on detections
