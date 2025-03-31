@@ -4,14 +4,12 @@ import streamlit as st
 import cv2
 import settings
 import threading
-from streamlit_webrtc import webrtc_streamer, VideoProcessorBase, RTCConfiguration
-import av
-import logging
-import os
 
-# Set up logging
-logging.basicConfig(level=logging.DEBUG)
-logger = logging.getLogger(__name__)
+def sleep_and_clear_success():
+    time.sleep(3)
+    st.session_state['recyclable_placeholder'].empty()
+    st.session_state['non_recyclable_placeholder'].empty()
+    st.session_state['hazardous_placeholder'].empty()
 
 def load_model(model_path):
     model = YOLO(model_path)
@@ -27,126 +25,75 @@ def classify_waste_type(detected_items):
 def remove_dash_from_class_name(class_name):
     return class_name.replace("_", " ")
 
-class VideoProcessor(VideoProcessorBase):
-    def __init__(self, model):
-        self.model = model
-        self.unique_classes = set()
-        self.last_detection_time = 0
-
-    def recv(self, frame):
-        try:
-            img = frame.to_ndarray(format="bgr24")
-            img = cv2.resize(img, (640, int(640*(9/16))))
-            
-            res = self.model.predict(img, conf=0.6)
-            names = self.model.names
-            detected_items = set()
-
-            for result in res:
-                new_classes = set([names[int(c)] for c in result.boxes.cls])
-                if new_classes != self.unique_classes:
-                    self.unique_classes = new_classes
-                    detected_items.update(self.unique_classes)
-                    
-                    # Update session state from a thread-safe context
-                    if detected_items:
-                        recyclable_items, non_recyclable_items, hazardous_items = classify_waste_type(detected_items)
-                        st.session_state['detected_items'] = {
-                            'recyclable': recyclable_items,
-                            'non_recyclable': non_recyclable_items,
-                            'hazardous': hazardous_items
-                        }
-                        st.session_state['update_ui'] = True
-
-            return av.VideoFrame.from_ndarray(res[0].plot(), format="bgr24")
-        except Exception as e:
-            logger.error(f"Error in video processing: {str(e)}")
-            return frame
-
-def play_webcam(model):
-    # Initialize session state variables
-    if 'detected_items' not in st.session_state:
-        st.session_state['detected_items'] = {'recyclable': set(), 'non_recyclable': set(), 'hazardous': set()}
-    if 'update_ui' not in st.session_state:
-        st.session_state['update_ui'] = False
+def _display_detected_frames(model, st_frame, image):
+    image = cv2.resize(image, (640, int(640*(9/16))))
     
-    # Create placeholders
-    recyclable_placeholder = st.sidebar.empty()
-    non_recyclable_placeholder = st.sidebar.empty()
-    hazardous_placeholder = st.sidebar.empty()
-    
-    # Configure WebRTC with multiple STUN servers and TURN servers
-    # Using a combination of free TURN servers for better reliability
-    rtc_configuration = RTCConfiguration(
-        {"iceServers": [
-            {"urls": ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"]},
-            {
-                "urls": [
-                    "turn:openrelay.metered.ca:80",
-                    "turn:openrelay.metered.ca:443",
-                    "turn:openrelay.metered.ca:443?transport=tcp"
-                ],
-                "username": "openrelayproject",
-                "credential": "openrelayproject"
-            },
-            {
-                "urls": [
-                    "turn:global.turn.twilio.com:3478?transport=udp",
-                    "turn:global.turn.twilio.com:3478?transport=tcp",
-                    "turn:global.turn.twilio.com:443?transport=tcp"
-                ],
-                "username": "f4b4035eaa76f4a55de5f4351567653ee4ff6fa97b50b6b334fcc1be9c27212d",
-                "credential": "myL7UCqLYXcr1zBzJ7+IZDJloLe4wG4UvLX8H3Kv3lY="
-            }
-        ]}
-    )
-    
-    # Create WebRTC streamer with additional options for better stability
-    webrtc_ctx = webrtc_streamer(
-        key="waste-detection",
-        video_processor_factory=lambda: VideoProcessor(model),
-        rtc_configuration=rtc_configuration,
-        media_stream_constraints={"video": True, "audio": False},
-        async_processing=True,
-        video_html_attrs={"controls": True, "autoPlay": True, "style": {"width": "100%", "height": "auto"}},
-        async_transform=True,
-    )
-    
-    # Update UI based on detections
-    if webrtc_ctx.state.playing:
-        if st.session_state.get('update_ui', False):
-            items = st.session_state['detected_items']
-            
-            if items['recyclable']:
-                detected_items_str = "\n- ".join(remove_dash_from_class_name(item) for item in items['recyclable'])
-                recyclable_placeholder.markdown(
+    if 'unique_classes' not in st.session_state:
+        st.session_state['unique_classes'] = set()
+
+    if 'recyclable_placeholder' not in st.session_state:
+        st.session_state['recyclable_placeholder'] = st.sidebar.empty()
+    if 'non_recyclable_placeholder' not in st.session_state:
+        st.session_state['non_recyclable_placeholder'] = st.sidebar.empty()
+    if 'hazardous_placeholder' not in st.session_state:
+        st.session_state['hazardous_placeholder'] = st.sidebar.empty()
+
+    if 'last_detection_time' not in st.session_state:
+        st.session_state['last_detection_time'] = 0
+
+    res = model.predict(image, conf=0.6)
+    names = model.names
+    detected_items = set()
+
+    for result in res:
+        new_classes = set([names[int(c)] for c in result.boxes.cls])
+        if new_classes != st.session_state['unique_classes']:
+            st.session_state['unique_classes'] = new_classes
+            st.session_state['recyclable_placeholder'].markdown('')
+            st.session_state['non_recyclable_placeholder'].markdown('')
+            st.session_state['hazardous_placeholder'].markdown('')
+            detected_items.update(st.session_state['unique_classes'])
+
+            recyclable_items, non_recyclable_items, hazardous_items = classify_waste_type(detected_items)
+
+            if recyclable_items:
+                detected_items_str = "\n- ".join(remove_dash_from_class_name(item) for item in recyclable_items)
+                st.session_state['recyclable_placeholder'].markdown(
                     f"<div class='stRecyclable'>Recyclable items:\n\n- {detected_items_str}</div>",
                     unsafe_allow_html=True
                 )
-            else:
-                recyclable_placeholder.empty()
-                
-            if items['non_recyclable']:
-                detected_items_str = "\n- ".join(remove_dash_from_class_name(item) for item in items['non_recyclable'])
-                non_recyclable_placeholder.markdown(
+            if non_recyclable_items:
+                detected_items_str = "\n- ".join(remove_dash_from_class_name(item) for item in non_recyclable_items)
+                st.session_state['non_recyclable_placeholder'].markdown(
                     f"<div class='stNonRecyclable'>Non-Recyclable items:\n\n- {detected_items_str}</div>",
                     unsafe_allow_html=True
                 )
-            else:
-                non_recyclable_placeholder.empty()
-                
-            if items['hazardous']:
-                detected_items_str = "\n- ".join(remove_dash_from_class_name(item) for item in items['hazardous'])
-                hazardous_placeholder.markdown(
+            if hazardous_items:
+                detected_items_str = "\n- ".join(remove_dash_from_class_name(item) for item in hazardous_items)
+                st.session_state['hazardous_placeholder'].markdown(
                     f"<div class='stHazardous'>Hazardous items:\n\n- {detected_items_str}</div>",
                     unsafe_allow_html=True
                 )
-            else:
-                hazardous_placeholder.empty()
-                
-            st.session_state['update_ui'] = False
-    else:
-        # Clear the placeholders when not streaming
-        recyclable_placeholder.empty()
-        non_recyclable_placeholder.empty()
-        hazardous_placeholder.empty()
+
+            threading.Thread(target=sleep_and_clear_success).start()
+            st.session_state['last_detection_time'] = time.time()
+
+    res_plotted = res[0].plot()
+    st_frame.image(res_plotted, channels="BGR")
+
+
+def play_webcam(model):
+    source_webcam = settings.WEBCAM_PATH
+    if st.button('Detect Objects'):
+        try:
+            vid_cap = cv2.VideoCapture(source_webcam)
+            st_frame = st.empty()
+            while (vid_cap.isOpened()):
+                success, image = vid_cap.read()
+                if success:
+                    _display_detected_frames(model,st_frame,image)
+                else:
+                    vid_cap.release()
+                    break
+        except Exception as e:
+            st.sidebar.error("Error loading video: " + str(e))

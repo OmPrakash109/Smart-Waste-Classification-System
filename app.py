@@ -2,10 +2,6 @@ from pathlib import Path
 import streamlit as st
 import helper
 import settings
-import os
-
-# Configure port for Render deployment
-port = int(os.environ.get("PORT", 8501))
 
 st.set_page_config(
     page_title="Waste Detection",
@@ -16,8 +12,7 @@ st.sidebar.title("Detect Console")
 model_path = Path(settings.DETECTION_MODEL)
 
 st.title("Intelligent waste segregation system")
-st.write("Click the 'Start' button in the video frame below to begin detection. Click 'Stop' to end the stream.")
-
+st.write("Start detecting objects in the webcam stream by clicking the button below. To stop the detection, click stop button in the top right corner of the webcam stream.")
 st.markdown(
 """
 <style>
@@ -56,7 +51,6 @@ try:
 except Exception as ex:
     st.error(f"Unable to load model. Check the specified path: {model_path}")
     st.error(ex)
-
 helper.play_webcam(model)
 
 st.sidebar.markdown("This is a demo of the waste detection model.", unsafe_allow_html=True)
